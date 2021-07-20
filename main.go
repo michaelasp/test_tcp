@@ -126,8 +126,8 @@ func main() {
 		}
 		src, _ := snp.InetDiagMsg.ID.IDiagDst.MarshalCSV()
 		dst, _ := snp.InetDiagMsg.ID.IDiagSrc.MarshalCSV()
-		fmt.Printf("Congestion window is %d, RTT is %d, retrans is %v, dest is %q \n",
-			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst)
+		fmt.Printf("Congestion window is %d, RTT is %d, src is %q, dest is %q, retransmits are %d \n",
+			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, uint32(snp.InetDiagMsg.IDiagRetrans))
 	}
 
 	return
