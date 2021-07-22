@@ -99,7 +99,7 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 			if m != nil {
 				cur, err := parser.MakeArchivalRecord(m, false)
 				if err != nil {
-					return nil, err
+					continue
 				}
 				archives = append(archives, cur)
 			}
@@ -112,18 +112,20 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 		}
 	}
 	for _, elem := range archives {
-		_, snp, _ := parser.Decode(elem)
-		if snp == nil {
+		_, snp, err := parser.Decode(elem)
+		if snp == nil || err != nil {
 			// fmt.Println(err)
+			continue
+		}
+		bit := uint32(1) << uint8(inetdiag.INET_DIAG_INFO-1)
+		if bit&snp.Observed == 0 || bit&snp.NotFullyParsed != 0 {
+			fmt.Println("Error!")
 			continue
 		}
 		src, _ := snp.InetDiagMsg.ID.IDiagDst.MarshalCSV()
 		dst, _ := snp.InetDiagMsg.ID.IDiagSrc.MarshalCSV()
 		fmt.Printf("Congestion window is %d, RTT is %d, src is %q, dest is %q, retransmits are %d \n",
 			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, snp.TCPInfo.TotalRetrans)
-		if snp.InetDiagMsg.IDiagRetrans != 0 {
-			fmt.Println("eee")
-		}
 		snps = append(snps, snp)
 	}
 	return snps, nil
@@ -139,9 +141,8 @@ func main() {
 	}
 	_, err = getSnapshots(req)
 	if err != nil {
-		fmt.Println("Error getting req: ", err)
+		fmt.Println("Error getting req6: ", err)
 	}
-
 	return
 
 }

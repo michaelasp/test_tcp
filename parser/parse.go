@@ -355,5 +355,3 @@ type Snapshot struct {
 	DCTCPInfo *inetdiag.DCTCPInfo `csv:"-"`
 	BBRInfo   *inetdiag.BBRInfo   `csv:"-"`
 }
-
-var zeroTime = time.Time{}
