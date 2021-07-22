@@ -67,48 +67,41 @@ func processSingleMessage(m *syscall.NetlinkMessage, seq uint32, pid uint32) (*s
 	return m, true, nil
 }
 
-func main() {
-	var res []*parser.ArchivalRecord
-	//req6 := makeReq(syscall.AF_INET6)
-	req := makeReq(syscall.AF_INET)
+func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
+	var archives []*parser.ArchivalRecord
+	var snps []*parser.Snapshot
 	sockType := syscall.NETLINK_INET_DIAG
 	s, err := nl.Subscribe(sockType)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return nil, err
 	}
 	defer s.Close()
 	if err := s.Send(req); err != nil {
-		fmt.Println(err)
-		return
+		return nil, err
 	}
 	pid, err := s.GetPid()
 	if err != nil {
-		fmt.Println(err)
-		return
+		return nil, err
 	}
 	// Adapted this from req.Execute in nl_linux.go
 	for {
 		done := false
 		msgs, _, err := s.Receive()
 		if err != nil {
-			fmt.Println(err)
-			return
+			return nil, err
 		}
 		// TODO avoid the copy.
 		for i := range msgs {
 			m, shouldContinue, err := processSingleMessage(&msgs[i], req.Seq, pid)
 			if err != nil {
-				fmt.Println(err)
-				return
+				return nil, err
 			}
 			if m != nil {
 				cur, err := parser.MakeArchivalRecord(m, false)
 				if err != nil {
-					fmt.Println(err)
-					return
+					return nil, err
 				}
-				res = append(res, cur)
+				archives = append(archives, cur)
 			}
 			if !shouldContinue {
 				done = true
@@ -118,7 +111,7 @@ func main() {
 			break
 		}
 	}
-	for _, elem := range res {
+	for _, elem := range archives {
 		_, snp, _ := parser.Decode(elem)
 		if snp == nil {
 			// fmt.Println(err)
@@ -128,6 +121,25 @@ func main() {
 		dst, _ := snp.InetDiagMsg.ID.IDiagSrc.MarshalCSV()
 		fmt.Printf("Congestion window is %d, RTT is %d, src is %q, dest is %q, retransmits are %d \n",
 			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, uint32(snp.InetDiagMsg.IDiagRetrans))
+		if snp.InetDiagMsg.IDiagRetrans != 0 {
+			fmt.Println("eee")
+		}
+		snps = append(snps, snp)
+	}
+	return snps, nil
+}
+
+func main() {
+
+	req6 := makeReq(syscall.AF_INET6)
+	req := makeReq(syscall.AF_INET)
+	_, err := getSnapshots(req6)
+	if err != nil {
+		fmt.Println("Error getting req6: ", err)
+	}
+	_, err = getSnapshots(req)
+	if err != nil {
+		fmt.Println("Error getting req: ", err)
 	}
 
 	return
