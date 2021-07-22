@@ -120,7 +120,7 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 		src, _ := snp.InetDiagMsg.ID.IDiagDst.MarshalCSV()
 		dst, _ := snp.InetDiagMsg.ID.IDiagSrc.MarshalCSV()
 		fmt.Printf("Congestion window is %d, RTT is %d, src is %q, dest is %q, retransmits are %d \n",
-			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, uint32(snp.InetDiagMsg.IDiagRetrans))
+			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, snp.TCPInfo.TotalRetrans)
 		if snp.InetDiagMsg.IDiagRetrans != 0 {
 			fmt.Println("eee")
 		}
