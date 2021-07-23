@@ -84,8 +84,9 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 		return nil, err
 	}
 	// Adapted this from req.Execute in nl_linux.go
+snapshotLoop:
 	for {
-		done := false
+
 		msgs, _, err := s.Receive()
 		if err != nil {
 			return nil, err
@@ -105,11 +106,8 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 
 			}
 			if !shouldContinue {
-				done = true
+				break snapshotLoop
 			}
-		}
-		if done {
-			break
 		}
 
 	}
