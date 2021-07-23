@@ -10,28 +10,52 @@ import (
 	"github.com/michaelasp/test_tcp/tcp"
 )
 
-// Metadata contains the metadata for a particular TCP stream.
-type Metadata struct {
-	UUID      string
-	Sequence  int
-	StartTime time.Time
-}
+// Snapshot contains all info gathered through netlink library.
+type Snapshot struct {
+	// Timestamp of batch of messages containing this message.
+	Timestamp time.Time
 
-// ArchivalRecord is a container for parsed InetDiag messages and attributes.
-type ArchivalRecord struct {
-	// Timestamp should be truncated to 1 millisecond for best compression.
-	// Using int64 milliseconds instead reduces compressed size by 0.5 bytes/record, or about 1.5%
-	Timestamp time.Time `json:",omitempty"`
+	// Bit field indicating whether each message type was observed.
+	Observed uint32
 
-	// Storing the RawIDM instead of the parsed InetDiagMsg reduces Marshalling by 2.6 usec, and
-	// typical compressed size by 3-4 bytes/record
-	RawIDM inetdiag.RawInetDiagMsg `json:",omitempty"` // RawInetDiagMsg within NLMsg
-	// Saving just the .Value fields reduces Marshalling by 1.9 usec.
-	Attributes [][]byte `json:",omitempty"` // byte slices from RouteAttr.Value, backed by NLMsg
+	// Bit field indicating whether any message type was NOT fully parsed.
+	// TODO - populate this field if any message is ignored, or not fully parsed.
+	NotFullyParsed uint32
 
-	// Metadata contains connection level metadata.  It is typically included in the very first record
-	// in a file.
-	Metadata *Metadata `json:",omitempty"`
+	// Info from struct inet_diag_msg, including socket_id;
+	InetDiagMsg *inetdiag.InetDiagMsg
+
+	SockInfo *inetdiag.SockID
+	// From INET_DIAG_CONG message.
+	CongestionAlgorithm string
+
+	// See https://tools.ietf.org/html/rfc3168
+	// TODO Do we need to record whether these are present and zero, vs absent?
+	TOS     uint8
+	TClass  uint8
+	ClassID uint8
+
+	// TODO Do we need to record present and zero, vs absent?
+	Shutdown uint8
+
+	// From INET_DIAG_PROTOCOL message.
+	// TODO Do we need to record present and zero, vs absent?
+	Protocol inetdiag.Protocol
+
+	Mark uint32
+
+	// TCPInfo contains data from struct tcp_info.
+	TCPInfo *tcp.LinuxTCPInfo
+
+	// Data obtained from INET_DIAG_MEMINFO.
+	MemInfo *inetdiag.MemInfo
+
+	// Data obtained from INET_DIAG_SKMEMINFO.
+	SocketMem *inetdiag.SocketMemInfo
+
+	VegasInfo *inetdiag.VegasInfo
+	DCTCPInfo *inetdiag.DCTCPInfo
+	BBRInfo   *inetdiag.BBRInfo
 }
 
 // ParseRouteAttr parses a byte array into slice of NetlinkRouteAttr struct.
@@ -53,10 +77,11 @@ func ParseRouteAttr(b []byte) ([]NetlinkRouteAttr, error) {
 // MakeArchivalRecord parses the NetlinkMessage into a ArchivalRecord.  If skipLocal is true, it will return nil for
 // loopback, local unicast, multicast, and unspecified connections.
 // Note that Parse does not populate the Timestamp field, so caller should do so.
-func MakeArchivalRecord(msg *NetlinkMessage, skipLocal bool) (*ArchivalRecord, error) {
+func MakeSnapShot(msg *NetlinkMessage, skipLocal bool) (*Snapshot, error) {
 	if msg.Header.Type != 20 {
 		return nil, ErrNotType20
 	}
+
 	raw, attrBytes := inetdiag.SplitInetDiagMsg(msg.Data)
 	if raw == nil {
 		return nil, ErrParseFailed
@@ -72,14 +97,12 @@ func MakeArchivalRecord(msg *NetlinkMessage, skipLocal bool) (*ArchivalRecord, e
 		}
 	}
 
-	record := ArchivalRecord{RawIDM: raw}
-
-	attrs, err := ParseRouteAttr(attrBytes)
+	attrsUnsafe, err := ParseRouteAttr(attrBytes)
 	if err != nil {
 		return nil, err
 	}
 	maxAttrType := uint16(0)
-	for _, a := range attrs {
+	for _, a := range attrsUnsafe {
 		t := a.Attr.Type
 		if t > maxAttrType {
 			maxAttrType = t
@@ -88,21 +111,26 @@ func MakeArchivalRecord(msg *NetlinkMessage, skipLocal bool) (*ArchivalRecord, e
 	if maxAttrType > 2*inetdiag.INET_DIAG_MAX {
 		maxAttrType = 2 * inetdiag.INET_DIAG_MAX
 	}
-	record.Attributes = make([][]byte, maxAttrType+1, maxAttrType+1)
-	for _, a := range attrs {
+	attributes := make([][]byte, maxAttrType+1, maxAttrType+1)
+	for _, a := range attrsUnsafe {
 		t := a.Attr.Type
 		if t > maxAttrType {
 			fmt.Println("Error!! Received RouteAttr with very large Type:", t)
 			continue
 		}
-		if record.Attributes[t] != nil {
+		if attributes[t] != nil {
 			// TODO - add metric so we can alert on these.
 			fmt.Println("Parse error - Attribute appears more than once:", t)
 		}
-		record.Attributes[t] = a.Value
+		attributes[t] = a.Value
 	}
-
-	return &record, nil
+	snp, err := decode(&raw, attributes)
+	if err != nil {
+		return nil, err
+	}
+	sockInfo := snp.InetDiagMsg.ID.GetSockID()
+	snp.SockInfo = &sockInfo
+	return snp, nil
 }
 
 func isLocal(addr net.IP) bool {
@@ -121,23 +149,18 @@ func Parse(raw inetdiag.RawInetDiagMsg) (*inetdiag.InetDiagMsg, error) {
 	return (*inetdiag.InetDiagMsg)(unsafe.Pointer(&raw[0])), nil
 }
 
-// Decode decodes a netlink.ArchivalRecord into a single Snapshot
-// Initial ArchivalRecord may have just a Snapshot, just Metadata, or both.
-func Decode(ar *ArchivalRecord) (*Metadata, *Snapshot, error) {
+func decode(rawIDM *inetdiag.RawInetDiagMsg, attributes [][]byte) (*Snapshot, error) {
 	var err error
 	result := Snapshot{}
-	result.Timestamp = ar.Timestamp
-	if ar.Metadata == nil && ar.RawIDM == nil {
-		return nil, nil, fmt.Errorf("error empty record")
-	}
-	if ar.RawIDM != nil {
-		result.InetDiagMsg, err = ar.RawIDM.Parse()
+
+	if rawIDM != nil {
+		result.InetDiagMsg, err = rawIDM.Parse()
 		if err != nil {
 			fmt.Println("Error decoding RawIDM:", err)
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	for t, raw := range ar.Attributes {
+	for t, raw := range attributes {
 		if raw == nil {
 			continue
 		}
@@ -164,24 +187,12 @@ func Decode(ar *ArchivalRecord) (*Metadata, *Snapshot, error) {
 			result.DCTCPInfo, ok = rta.toDCTCPInfo()
 		case inetdiag.INET_DIAG_PROTOCOL:
 			result.Protocol, ok = rta.toProtocol()
-		case inetdiag.INET_DIAG_SKV6ONLY:
-			fmt.Println("SKV6ONLY not handled", len(rta))
-		case inetdiag.INET_DIAG_LOCALS:
-			fmt.Println("LOCAL not handled", len(rta))
-		case inetdiag.INET_DIAG_PEERS:
-			fmt.Println("PEERS not handled", len(rta))
-		case inetdiag.INET_DIAG_PAD:
-			fmt.Println("PAD not handled", len(rta))
 		case inetdiag.INET_DIAG_MARK:
 			result.Mark, ok = rta.toMark()
 		case inetdiag.INET_DIAG_BBRINFO:
 			result.BBRInfo, ok = rta.toBBRInfo()
 		case inetdiag.INET_DIAG_CLASS_ID:
 			result.ClassID, ok = rta.toClassID()
-		case inetdiag.INET_DIAG_MD5SIG:
-			fmt.Println("MD5SIGnot handled", len(rta))
-		default:
-			//fmt.Println("unhandled attribute type:", t)
 		}
 		bit := uint32(1) << uint8(t-1)
 		result.Observed |= bit
@@ -189,7 +200,7 @@ func Decode(ar *ArchivalRecord) (*Metadata, *Snapshot, error) {
 			result.NotFullyParsed |= bit
 		}
 	}
-	return ar.Metadata, &result, nil
+	return &result, nil
 }
 
 /*********************************************************************************************/
@@ -307,51 +318,4 @@ func (raw RouteAttrValue) toBBRInfo() (*inetdiag.BBRInfo, bool) {
 	structSize := (int)(unsafe.Sizeof(inetdiag.BBRInfo{}))
 	data, ok := maybeCopy(raw, structSize, "BBRInfo")
 	return (*inetdiag.BBRInfo)(data), ok
-}
-
-// Snapshot contains all info gathered through netlink library.
-type Snapshot struct {
-	// Timestamp of batch of messages containing this message.
-	Timestamp time.Time
-
-	// Bit field indicating whether each message type was observed.
-	Observed uint32
-
-	// Bit field indicating whether any message type was NOT fully parsed.
-	// TODO - populate this field if any message is ignored, or not fully parsed.
-	NotFullyParsed uint32 `csv:",omitempty"`
-
-	// Info from struct inet_diag_msg, including socket_id;
-	InetDiagMsg *inetdiag.InetDiagMsg `csv:"-"`
-
-	// From INET_DIAG_CONG message.
-	CongestionAlgorithm string `csv:",omitempty"`
-
-	// See https://tools.ietf.org/html/rfc3168
-	// TODO Do we need to record whether these are present and zero, vs absent?
-	TOS     uint8 `csv:",omitempty"`
-	TClass  uint8 `csv:",omitempty"`
-	ClassID uint8 `csv:",omitempty"`
-
-	// TODO Do we need to record present and zero, vs absent?
-	Shutdown uint8 `csv:",omitempty"`
-
-	// From INET_DIAG_PROTOCOL message.
-	// TODO Do we need to record present and zero, vs absent?
-	Protocol inetdiag.Protocol `csv:",omitempty"`
-
-	Mark uint32 `csv:",omitempty"`
-
-	// TCPInfo contains data from struct tcp_info.
-	TCPInfo *tcp.LinuxTCPInfo `csv:"-"`
-
-	// Data obtained from INET_DIAG_MEMINFO.
-	MemInfo *inetdiag.MemInfo `csv:"-"`
-
-	// Data obtained from INET_DIAG_SKMEMINFO.
-	SocketMem *inetdiag.SocketMemInfo `csv:"-"`
-
-	VegasInfo *inetdiag.VegasInfo `csv:"-"`
-	DCTCPInfo *inetdiag.DCTCPInfo `csv:"-"`
-	BBRInfo   *inetdiag.BBRInfo   `csv:"-"`
 }

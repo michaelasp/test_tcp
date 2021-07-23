@@ -56,81 +56,78 @@ func (x State) String() string {
 // It corresponds to the struct tcp_info in
 // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/tcp.h
 type LinuxTCPInfo struct {
-	State       uint8 `csv:"TCP.State"`
-	CAState     uint8 `csv:"TCP.CAState"`
-	Retransmits uint8 `csv:"TCP.Retransmits"`
-	Probes      uint8 `csv:"TCP.Probes"`
-	Backoff     uint8 `csv:"TCP.Backoff"`
-	Options     uint8 `csv:"TCP.Options"`
-	WScale      uint8 `csv:"TCP.WScale"`     //snd_wscale : 4, tcpi_rcv_wscale : 4;
-	AppLimited  uint8 `csv:"TCP.AppLimited"` //delivery_rate_app_limited:1;
+	State       uint8
+	CAState     uint8
+	Retransmits uint8
+	Probes      uint8
+	Backoff     uint8
+	Options     uint8
+	WScale      uint8
+	AppLimited  uint8
 
-	RTO    uint32 `csv:"TCP.RTO"` // offset 8
-	ATO    uint32 `csv:"TCP.ATO"`
-	SndMSS uint32 `csv:"TCP.SndMSS"`
-	RcvMSS uint32 `csv:"TCP.RcvMSS"`
+	RTO    uint32
+	ATO    uint32
+	SndMSS uint32
+	RcvMSS uint32
 
-	Unacked uint32 `csv:"TCP.Unacked"` // offset 24
-	Sacked  uint32 `csv:"TCP.Sacked"`
-	Lost    uint32 `csv:"TCP.Lost"`
-	Retrans uint32 `csv:"TCP.Retrans"`
-	Fackets uint32 `csv:"TCP.Fackets"`
+	Unacked uint32
+	Sacked  uint32
+	Lost    uint32
+	Retrans uint32
+	Fackets uint32
 
 	/* Times. */
 	// These seem to be elapsed time, so they increase on almost every sample.
 	// We can probably use them to get more info about intervals between samples.
-	LastDataSent uint32 `csv:"TCP.LastDataSent"` // offset 44
-	LastAckSent  uint32 `csv:"TCP.LastAckSent"`  /* Not remembered, sorry. */ // offset 48
-	LastDataRecv uint32 `csv:"TCP.LastDataRecv"` // offset 52
-	LastAckRecv  uint32 `csv:"TCP.LastDataRecv"` // offset 56
+	LastDataSent uint32
+	LastAckSent  uint32
+	LastDataRecv uint32
+	LastAckRecv  uint32
 
 	/* Metrics. */
-	PMTU        uint32 `csv:"TCP.PMTU"`
-	RcvSsThresh uint32 `csv:"TCP.RcvSsThresh"`
-	RTT         uint32 `csv:"TCP.RTT"`
-	RTTVar      uint32 `csv:"TCP.RTTVar"`
-	SndSsThresh uint32 `csv:"TCP.SndSsThresh"`
-	SndCwnd     uint32 `csv:"TCP.SndCwnd"`
-	AdvMSS      uint32 `csv:"TCP.AdvMSS"`
-	Reordering  uint32 `csv:"TCP.Reordering"`
+	PMTU        uint32
+	RcvSsThresh uint32
+	RTT         uint32
+	RTTVar      uint32
+	SndSsThresh uint32
+	SndCwnd     uint32
+	AdvMSS      uint32
+	Reordering  uint32
 
-	RcvRTT   uint32 `csv:"TCP.RcvRTT"`
-	RcvSpace uint32 `csv:"TCP.RcvSpace"`
+	RcvRTT   uint32
+	RcvSpace uint32
 
-	TotalRetrans uint32 `csv:"TCP.TotalRetrans"`
+	TotalRetrans uint32
 
-	PacingRate    int64 `csv:"TCP.PacingRate"`    // This is often -1, so better for it to be signed
-	MaxPacingRate int64 `csv:"TCP.MaxPacingRate"` // This is often -1, so better to be signed.
+	PacingRate    int64
+	MaxPacingRate int64
 
-	// NOTE: In linux, these are uint64, but we make them int64 here for compatibility with BigQuery
-	BytesAcked    int64 `csv:"TCP.BytesAcked"`    /* RFC4898 tcpEStatsAppHCThruOctetsAcked */
-	BytesReceived int64 `csv:"TCP.BytesReceived"` /* RFC4898 tcpEStatsAppHCThruOctetsReceived */
-	SegsOut       int32 `csv:"TCP.SegsOut"`       /* RFC4898 tcpEStatsPerfSegsOut */
-	SegsIn        int32 `csv:"TCP.SegsIn"`        /* RFC4898 tcpEStatsPerfSegsIn */
+	BytesAcked    uint64
+	BytesReceived uint64
+	SegsOut       uint32
+	SegsIn        uint32
 
-	NotsentBytes uint32 `csv:"TCP.NotsentBytes"`
-	MinRTT       uint32 `csv:"TCP.MinRTT"`
-	DataSegsIn   uint32 `csv:"TCP.DataSegsIn"`  /* RFC4898 tcpEStatsDataSegsIn */
-	DataSegsOut  uint32 `csv:"TCP.DataSegsOut"` /* RFC4898 tcpEStatsDataSegsOut */
+	NotsentBytes uint32
+	MinRTT       uint32
+	DataSegsIn   uint32
+	DataSegsOut  uint32
 
-	// NOTE: In linux, this is uint64, but we make it int64 here for compatibility with BigQuery
-	DeliveryRate int64 `csv:"TCP.DeliveryRate"`
+	DeliveryRate uint64
 
-	BusyTime      int64 `csv:"TCP.BusyTime"`      /* Time (usec) busy sending data */
-	RWndLimited   int64 `csv:"TCP.RWndLimited"`   /* Time (usec) limited by receive window */
-	SndBufLimited int64 `csv:"TCP.SndBufLimited"` /* Time (usec) limited by send buffer */
+	BusyTime      int64
+	RWndLimited   int64
+	SndBufLimited int64
 
-	Delivered   uint32 `csv:"TCP.Delivered"`
-	DeliveredCE uint32 `csv:"TCP.DeliveredCE"`
+	Delivered   uint32
+	DeliveredCE uint32
 
-	// NOTE: In linux, these are uint64, but we make them int64 here for compatibility with BigQuery
-	BytesSent    int64 `csv:"TCP.BytesSent"`    /* RFC4898 tcpEStatsPerfHCDataOctetsOut */
-	BytesRetrans int64 `csv:"TCP.BytesRetrans"` /* RFC4898 tcpEStatsPerfOctetsRetrans */
+	BytesSent    uint64
+	BytesRetrans uint64
 
-	DSackDups uint32 `csv:"TCP.DSackDups"` /* RFC4898 tcpEStatsStackDSACKDups */
-	ReordSeen uint32 `csv:"TCP.ReordSeen"` /* reordering events seen */
+	DSackDups uint32
+	ReordSeen uint32
 
-	RcvOooPack uint32 `csv:"TCP.RcvOooPack"` /* Out-of-order packets received */
+	RcvOooPack uint32
 
-	SndWnd uint32 `csv:"TCP.SndWnd"` /* peer's advertised receive window after scaling (bytes) */
+	SndWnd uint32
 }

@@ -3,6 +3,7 @@ package main
 // This package is only meaningful in Linux.
 
 import (
+	"encoding/json"
 	"fmt"
 	"syscall"
 
@@ -68,7 +69,6 @@ func processSingleMessage(m *syscall.NetlinkMessage, seq uint32, pid uint32) (*s
 }
 
 func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
-	var archives []*parser.ArchivalRecord
 	var snps []*parser.Snapshot
 	sockType := syscall.NETLINK_INET_DIAG
 	s, err := nl.Subscribe(sockType)
@@ -97,11 +97,12 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 				return nil, err
 			}
 			if m != nil {
-				cur, err := parser.MakeArchivalRecord(m, false)
-				if err != nil {
+				cur, err := parser.MakeSnapShot(m, true)
+				if cur == nil || err != nil {
 					continue
 				}
-				archives = append(archives, cur)
+				snps = append(snps, cur)
+
 			}
 			if !shouldContinue {
 				done = true
@@ -110,23 +111,7 @@ func getSnapshots(req *nl.NetlinkRequest) ([]*parser.Snapshot, error) {
 		if done {
 			break
 		}
-	}
-	for _, elem := range archives {
-		_, snp, err := parser.Decode(elem)
-		if snp == nil || err != nil {
-			// fmt.Println(err)
-			continue
-		}
-		bit := uint32(1) << uint8(inetdiag.INET_DIAG_INFO-1)
-		if bit&snp.Observed == 0 || bit&snp.NotFullyParsed != 0 {
-			fmt.Println("Error!")
-			continue
-		}
-		src, _ := snp.InetDiagMsg.ID.IDiagDst.MarshalCSV()
-		dst, _ := snp.InetDiagMsg.ID.IDiagSrc.MarshalCSV()
-		fmt.Printf("Congestion window is %d, RTT is %d, src is %q, dest is %q, retransmits are %d \n",
-			snp.TCPInfo.SndCwnd, snp.TCPInfo.RTT, src, dst, snp.TCPInfo.TotalRetrans)
-		snps = append(snps, snp)
+
 	}
 	return snps, nil
 }
@@ -139,10 +124,12 @@ func main() {
 	if err != nil {
 		fmt.Println("Error getting req6: ", err)
 	}
-	_, err = getSnapshots(req)
+	res, err := getSnapshots(req)
 	if err != nil {
 		fmt.Println("Error getting req6: ", err)
 	}
+	val, _ := json.MarshalIndent(res, "", "    ")
+	fmt.Println(string(val))
 	return
 
 }

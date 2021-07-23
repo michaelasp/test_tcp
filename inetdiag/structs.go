@@ -28,7 +28,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"runtime"
 	"unsafe"
@@ -96,8 +95,7 @@ func (c *cookieType) MarshalCSV() (string, error) {
 
 type ipType [16]byte
 
-// MarshalCSV marshals ipType to CSV
-func (ipAddr *ipType) MarshalCSV() (string, error) {
+func (ipAddr *ipType) Marshal() (string, error) {
 	netIP := ip(*ipAddr)
 	return netIP.String(), nil
 }
@@ -105,8 +103,7 @@ func (ipAddr *ipType) MarshalCSV() (string, error) {
 // Port encodes a LinuxSockID Port
 type Port [2]byte
 
-// MarshalCSV marshals a Port to CSV
-func (p *Port) MarshalCSV() (string, error) {
+func (p *Port) Marshal() (string, error) {
 	value := binary.BigEndian.Uint16(p[:])
 	return fmt.Sprintf("%d", value), nil
 }
@@ -114,8 +111,7 @@ func (p *Port) MarshalCSV() (string, error) {
 // Interface encodes the LinuxSockID Interface field.
 type netIF [4]byte
 
-// MarshalCSV marshals Interface to CSV
-func (nif *netIF) MarshalCSV() (string, error) {
+func (nif *netIF) Marshal() (string, error) {
 	value := binary.BigEndian.Uint32(nif[:])
 	return fmt.Sprintf("%d", value), nil
 }
@@ -125,12 +121,12 @@ func (nif *netIF) MarshalCSV() (string, error) {
 // All fields are ignored for bigquery, and handled in code.
 // TODO make this unexported
 type LinuxSockID struct {
-	IDiagSPort  Port       `csv:"IDM.SockID.SPort" bigquery:"-"`
-	IDiagDPort  Port       `csv:"IDM.SockID.DPort" bigquery:"-"`
-	IDiagSrc    ipType     `csv:"IDM.SockID.Src" bigquery:"-"`
-	IDiagDst    ipType     `csv:"IDM.SockID.Dst" bigquery:"-"`
-	IDiagIf     netIF      `csv:"IDM.SockID.Interface" bigquery:"-"`
-	IDiagCookie cookieType `csv:"IDM.SockID.Cookie" bigquery:"-"`
+	IDiagSPort  Port
+	IDiagDPort  Port
+	IDiagSrc    ipType
+	IDiagDst    ipType
+	IDiagIf     netIF
+	IDiagCookie cookieType
 }
 
 // SockID is the natural golang struct equivalent of LinuxSockID
@@ -140,12 +136,7 @@ type SockID struct {
 	SrcIP     string
 	DstIP     string
 	Interface uint32
-	Cookie    int64 // Actually a uint64, but using int64 for compatibility with BigQuery
-}
-
-// CookieUint64 returns the original uint64 cookie value.
-func (sid *SockID) CookieUint64() uint64 {
-	return *(*uint64)(unsafe.Pointer(&sid.Cookie))
+	Cookie    uint64
 }
 
 // GetSockID extracts the SockID from the LinuxSockID.
@@ -156,7 +147,7 @@ func (id *LinuxSockID) GetSockID() SockID {
 		DstIP:     id.DstIP().String(),
 		DPort:     id.DPort(),
 		Interface: id.Interface(),
-		Cookie:    int64(id.Cookie()),
+		Cookie:    id.Cookie(),
 	}
 	return sid
 }
@@ -239,19 +230,16 @@ type MarkCond struct { // inet_diag_markcond
 // InetDiagMsg is the linux binary representation of a InetDiag message header, as in linux/inet_diag.h
 // Note that netlink messages use host byte ordering, unless NLA_F_NET_BYTEORDER flag is present.
 type InetDiagMsg struct {
-	IDiagFamily  uint8 `csv:"IDM.Family"`
-	IDiagState   uint8 `csv:"IDM.State"`
-	IDiagTimer   uint8 `csv:"IDM.Timer"`
-	IDiagRetrans uint8 `csv:"IDM.Retrans"`
-	// The ID is handled separately for both CSV and BigQuery, so they are tagged with "-"
-	// See TCPRow.SockID in tcpinfo repo.
-	// Field also suppressed in json, for use in BQ load exports.
-	ID           LinuxSockID `csv:"-" bigquery:"-" json:"-"`
-	IDiagExpires uint32      `csv:"IDM.Expires"`
-	IDiagRqueue  uint32      `csv:"IDM.Rqueue"`
-	IDiagWqueue  uint32      `csv:"IDM.Wqueue"`
-	IDiagUID     uint32      `csv:"IDM.UID"`
-	IDiagInode   uint32      `csv:"IDM.Inode"`
+	IDiagFamily  uint8
+	IDiagState   uint8
+	IDiagTimer   uint8
+	IDiagRetrans uint8
+	ID           LinuxSockID
+	IDiagExpires uint32
+	IDiagRqueue  uint32
+	IDiagWqueue  uint32
+	IDiagUID     uint32
+	IDiagInode   uint32
 }
 
 const (
@@ -272,9 +260,9 @@ func SplitInetDiagMsg(data []byte) (RawInetDiagMsg, []byte) {
 	// TODO - why using rtaAlign on InetDiagMsg ???
 	align := rtaAlignOf(int(unsafe.Sizeof(InetDiagMsg{})))
 	if len(data) < align {
-		log.Println("Wrong length", len(data), "<", align)
+		fmt.Println("Wrong length", len(data), "<", align)
 		_, file, line, _ := runtime.Caller(2)
-		log.Println(file, line, data)
+		fmt.Println(file, line, data)
 		return nil, nil
 	}
 	return RawInetDiagMsg(data[:align]), data[align:]
@@ -302,52 +290,52 @@ var ErrUnknownAF = errors.New("unknown address family")
 // Haven't found a corresponding linux struct, but the message is described
 // in https://manpages.debian.org/stretch/manpages/sock_diag.7.en.html
 type SocketMemInfo struct {
-	RmemAlloc  uint32 `csv:"SKMemInfo.RmemAlloc"`
-	Rcvbuf     uint32 `csv:"SKMemInfo.Rcvbuf"`
-	WmemAlloc  uint32 `csv:"SKMemInfo.WmemAlloc"`
-	Sndbuf     uint32 `csv:"SKMemInfo.Sndbug"`
-	FwdAlloc   uint32 `csv:"SKMemInfo.FwdAlloc"`
-	WmemQueued uint32 `csv:"SKMemInfo.WmemQueued"`
-	Optmem     uint32 `csv:"SKMemInfo.Optmem"`
-	Backlog    uint32 `csv:"SKMemInfo.Backlog"`
-	Drops      uint32 `csv:"SKMemInfo.Drops"`
+	RmemAlloc  uint32
+	Rcvbuf     uint32
+	WmemAlloc  uint32
+	Sndbuf     uint32
+	FwdAlloc   uint32
+	WmemQueued uint32
+	Optmem     uint32
+	Backlog    uint32
+	Drops      uint32
 }
 
 // MemInfo implements the struct associated with INET_DIAG_MEMINFO, corresponding with
 // linux struct inet_diag_meminfo in uapi/linux/inet_diag.h.
 type MemInfo struct {
-	Rmem uint32 `csv:"MemInfo.Rmem"`
-	Wmem uint32 `csv:"MemInfo.Wmem"`
-	Fmem uint32 `csv:"MemInfo.Fmem"`
-	Tmem uint32 `csv:"MemInfo.Tmem"`
+	Rmem uint32
+	Wmem uint32
+	Fmem uint32
+	Tmem uint32
 }
 
 // VegasInfo implements the struct associated with INET_DIAG_VEGASINFO, corresponding with
 // linux struct tcpvegas_info in uapi/linux/inet_diag.h.
 type VegasInfo struct {
-	Enabled  uint32 `csv:"Vegas.Enabled"`
-	RTTCount uint32 `csv:"Vegas.RTTCount"`
-	RTT      uint32 `csv:"Vegas.RTT"`
-	MinRTT   uint32 `csv:"Vegas.MinRTT"`
+	Enabled  uint32
+	RTTCount uint32
+	RTT      uint32
+	MinRTT   uint32
 }
 
 // DCTCPInfo implements the struct associated with INET_DIAG_DCTCPINFO attribute, corresponding with
 // linux struct tcp_dctcp_info in uapi/linux/inet_diag.h.
 type DCTCPInfo struct {
-	Enabled uint16 `csv:"DCTCP.Enabled"`
-	CEState uint16 `csv:"DCTCP.CEState"`
-	Alpha   uint32 `csv:"DCTCP.Alpha"`
-	ABEcn   uint32 `csv:"DCTCP.ABEcn"`
-	ABTot   uint32 `csv:"DCTCP.ABTot"`
+	Enabled uint16
+	CEState uint16
+	Alpha   uint32
+	ABEcn   uint32
+	ABTot   uint32
 }
 
 // BBRInfo implements the struct associated with INET_DIAG_BBRINFO attribute, corresponding with
 // linux struct tcp_bbr_info in uapi/linux/inet_diag.h.
 type BBRInfo struct {
-	BW         int64  `csv:"BBR.BW"`         // Max-filtered BW (app throughput) estimate in bytes/second
-	MinRTT     uint32 `csv:"BBR.MinRTT"`     // Min-filtered RTT in uSec
-	PacingGain uint32 `csv:"BBR.PacingGain"` // Pacing gain shifted left 8 bits
-	CwndGain   uint32 `csv:"BBR.CwndGain"`   // Cwnd gain shifted left 8 bits
+	BW         int64
+	MinRTT     uint32
+	PacingGain uint32
+	CwndGain   uint32
 }
 
 // LOCALS and PEERS contain an array of sockaddr_storage elements.
