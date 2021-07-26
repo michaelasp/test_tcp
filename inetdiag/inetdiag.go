@@ -2,6 +2,15 @@
 // Based on uapi/linux/inet_diag.h.
 package inetdiag
 
+import (
+	"fmt"
+	"syscall"
+
+	"github.com/michaelasp/test_tcp/tcp"
+	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
+)
+
 // Pretty basic code slightly adapted from code copied from
 // https://gist.github.com/gwind/05f5f649d93e6015cf47ffa2b2fd9713
 // Original source no longer available at https://github.com/eleme/netlink/blob/master/inetdiag.go
@@ -108,4 +117,55 @@ var ProtocolName = map[int32]string{
 	6:  "IPPROTO_TCP",
 	17: "IPPROTO_UDP",
 	33: "IPPROTO_DCCP",
+}
+
+// TODO - Figure out why we aren't seeing INET_DIAG_DCTCPINFO or INET_DIAG_BBRINFO messages.
+func MakeReq(inetType uint8) *nl.NetlinkRequest {
+	req := nl.NewNetlinkRequest(SOCK_DIAG_BY_FAMILY, syscall.NLM_F_DUMP|syscall.NLM_F_REQUEST)
+	msg := NewReqV2(inetType, syscall.IPPROTO_TCP,
+		tcp.AllFlags & ^((1<<uint(tcp.SYN_RECV))|(1<<uint(tcp.TIME_WAIT))|(1<<uint(tcp.CLOSE))))
+	msg.IDiagExt |= (1 << (INET_DIAG_MEMINFO - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_INFO - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_VEGASINFO - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_CONG - 1))
+
+	msg.IDiagExt |= (1 << (INET_DIAG_TCLASS - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_TOS - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_SKMEMINFO - 1))
+	msg.IDiagExt |= (1 << (INET_DIAG_SHUTDOWN - 1))
+
+	req.AddData(msg)
+	req.NlMsghdr.Type = SOCK_DIAG_BY_FAMILY
+	req.NlMsghdr.Flags |= syscall.NLM_F_DUMP | syscall.NLM_F_REQUEST
+	return req
+}
+
+func ProcessMessage(m *syscall.NetlinkMessage, seq uint32, pid uint32) (msg *syscall.NetlinkMessage, shouldContinue bool, err error) {
+	if m.Header.Seq != seq {
+		fmt.Printf("Wrong Seq nr %d, expected %d", m.Header.Seq, seq)
+		return nil, false, ErrBadSequence
+	}
+	if m.Header.Pid != pid {
+		fmt.Printf("Wrong pid %d, expected %d", m.Header.Pid, pid)
+		return nil, false, ErrBadPid
+	}
+	if m.Header.Type == unix.NLMSG_DONE {
+		return nil, false, nil
+	}
+	if m.Header.Type == unix.NLMSG_ERROR {
+		native := nl.NativeEndian()
+		if len(m.Data) < 4 {
+			return nil, false, ErrBadMsgData
+		}
+		error := int32(native.Uint32(m.Data[0:4]))
+		if error == 0 {
+			return nil, false, nil
+		}
+		fmt.Println(syscall.Errno(-error))
+
+	}
+	if m.Header.Flags&unix.NLM_F_MULTI == 0 {
+		return m, false, nil
+	}
+	return m, true, nil
 }
